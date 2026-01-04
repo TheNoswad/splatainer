@@ -1,0 +1,82 @@
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install GCC 10 and build essentials
+RUN apt-get update && apt-get install -y \
+    gcc-10 g++-10 \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    wget \
+    ca-certificates
+
+# Set GCC 10 as default
+ENV CC=gcc-10
+ENV CXX=g++-10
+
+# Install CUDA (adjust version as needed)
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y cuda-toolkit-12-6
+
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+# COLMAP dependencies
+RUN apt-get install -y \
+    libboost-all-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libceres-dev \
+    libopencv-dev \
+    libopenimageio-dev \
+    openimageio-tools
+
+# UI dependencies (X11, OpenGL)
+RUN apt-get install -y \
+    libx11-dev \
+    libxrandr-dev \
+    libxinerama-dev \
+    libxcursor-dev \
+    libxi-dev \
+    mesa-utils \
+    libgl1-mesa-dri
+
+# Build COLMAP
+WORKDIR /opt
+RUN git clone https://github.com/colmap/colmap.git && \
+    cd colmap && \
+    mkdir build && cd build && \
+    cmake .. -GNinja \
+        -DCMAKE_CUDA_ARCHITECTURES=all \
+        -DCMAKE_BUILD_TYPE=Release && \
+    ninja && \
+    ninja install \
+
+RUN git clone https://github.com/colmap/glomap.git && \
+    cd glomap && \
+    mkdir build && cd build && \
+    cmake .. -GNinja \
+        -DCMAKE_CUDA_ARCHITECTURES=all \
+        -DCMAKE_BUILD_TYPE=Release && \
+    ninja && \
+    ninja install
+
+# For UI support, you'll need to mount X11 socket at runtime
+# docker run --gpus all -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ...
+
+WORKDIR /workspace
+CMD ["/bin/bash"]

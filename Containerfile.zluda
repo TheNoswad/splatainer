@@ -1,0 +1,180 @@
+# Build stage
+FROM ubuntu:24.04 AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    gcc-10 g++-10 \
+    build-essential \
+    cmake \
+    ninja-build \
+    git \
+    wget \
+    ca-certificates \
+    python3 \
+    python3-pip \
+    curl
+
+ENV CC=gcc-10
+ENV CXX=g++-10
+
+# Install Rust
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:$PATH"
+
+# Install ROCm for building ZLUDA
+RUN wget https://repo.radeon.com/amdgpu-install/7.1.1/ubuntu/noble/amdgpu-install_7.1.1.70101-1_all.deb && \
+    apt install -y ./amdgpu-install_7.1.1.70101-1_all.deb && \
+    rm amdgpu-install_7.1.1.70101-1_all.deb && \
+    apt-get update && \
+    amdgpu-install -y --usecase=hip,rocm --no-dkms
+
+# Install CUDA Toolkit for compilation
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y cuda-toolkit-12-6
+
+ENV PATH=/usr/local/cuda/bin:/opt/rocm-7.1.1/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:/opt/rocm-7.1.1/lib:$LD_LIBRARY_PATH
+
+# Build ZLUDA from source
+WORKDIR /opt
+RUN git clone --recursive https://github.com/vosen/ZLUDA.git && \
+    cd ZLUDA && \
+    cargo xtask --release
+
+# COLMAP dependencies
+RUN apt-get install -y \
+    libboost-all-dev \
+    libeigen3-dev \
+    libflann-dev \
+    libfreeimage-dev \
+    libmetis-dev \
+    libgoogle-glog-dev \
+    libgflags-dev \
+    libsqlite3-dev \
+    libglew-dev \
+    qtbase5-dev \
+    libqt5opengl5-dev \
+    libcgal-dev \
+    libceres-dev \
+    libopencv-dev \
+    libopenimageio-dev \
+    openimageio-tools
+
+# UI dependencies
+RUN apt-get install -y \
+    libx11-dev \
+    libxrandr-dev \
+    libxinerama-dev \
+    libxcursor-dev \
+    libxi-dev \
+    mesa-utils \
+    libgl1-mesa-dri
+
+# Build COLMAP with CUDA
+WORKDIR /opt
+RUN git clone https://github.com/colmap/colmap.git && \
+    cd colmap && \
+    mkdir build && cd build && \
+    cmake .. -GNinja \
+        -DCMAKE_CUDA_ARCHITECTURES="70;75;80;86;89" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    ninja && \
+    ninja install
+
+# Build GLOMAP
+RUN git clone https://github.com/colmap/glomap.git && \
+    cd glomap && \
+    mkdir build && cd build && \
+    cmake .. -GNinja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
+    ninja && \
+    ninja install
+
+# Runtime stage with ZLUDA
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install wget first
+RUN apt-get update && apt-get install -y wget ca-certificates
+
+# Install ROCm runtime (same version as builder)
+RUN wget https://repo.radeon.com/amdgpu-install/7.1.1/ubuntu/noble/amdgpu-install_7.1.1.70101-1_all.deb && \
+    apt install -y ./amdgpu-install_7.1.1.70101-1_all.deb && \
+    rm amdgpu-install_7.1.1.70101-1_all.deb && \
+    apt-get update && \
+    amdgpu-install -y --usecase=hip,rocm --no-dkms && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install CUDA runtime libraries
+RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y \
+        cuda-cudart-12-6 \
+        cuda-nvrtc-12-6 \
+        libcublas-12-6 && \
+    rm cuda-keyring_1.1-1_all.deb && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+# Runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libboost-filesystem1.83.0 \
+    libboost-program-options1.83.0 \
+    libboost-system1.83.0 \
+    libboost-graph1.83.0 \
+    libfreeimage3 \
+    libgoogle-glog0v6 \
+    libgflags2.2 \
+    libsqlite3-0 \
+    libglew2.2 \
+    libqt5core5t64 \
+    libqt5gui5t64 \
+    libqt5widgets5t64 \
+    libqt5opengl5t64 \
+    libcgal-dev \
+    libceres-dev \
+    libopencv-dev \
+    libopenimageio-dev \
+    libgl1 \
+    libgl1-mesa-dri \
+    libx11-6 \
+    libxrandr2 \
+    libxinerama1 \
+    libxcursor1 \
+    libxi6 \
+    mesa-utils \
+    libmetis5 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install FFmpeg
+RUN apt-get update && apt-get install -y \
+    ffmpeg \
+    libva2 \
+    libva-drm2 \
+    mesa-va-drivers \
+    vainfo \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy ZLUDA from builder (built from source against ROCm 7.1.1!)
+COPY --from=builder /opt/ZLUDA/target/release /opt/zluda
+
+# Copy binaries from builder
+COPY --from=builder /usr/local /usr/local
+
+# Set library paths - ZLUDA built against ROCm 7.1.1
+ENV LD_LIBRARY_PATH=/opt/zluda:/opt/rocm-7.1.1/lib:/usr/local/cuda-12.6/lib64:/usr/local/lib:$LD_LIBRARY_PATH
+ENV LD_PRELOAD=/opt/zluda/libcuda.so:/opt/zluda/libcublas.so
+
+WORKDIR /workspace
+CMD ["/bin/bash"]
