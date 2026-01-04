@@ -34,7 +34,7 @@ jobs:
         id: build
         uses: redhat-actions/buildah-build@v2.9
         with:
-          image: ${{ env.IMAGE_NAME }}
+          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: cuda latest ${{ github.sha }}-cuda
           containerfiles: |
             ./Containerfile.cuda
@@ -44,8 +44,7 @@ jobs:
           extra-args: |
             --pull
             --security-opt label=disable
-            --label org.opencontainers.image.source=https://github.com/${{ github.repository }}
-            --label org.opencontainers.image.description="COLMAP/GLOMAP container with NVIDIA CUDA support"
+            --label org.opencontainers.image.source=${{ github.repository }}
 
       - name: Push to GHCR
         uses: redhat-actions/push-to-registry@v2
