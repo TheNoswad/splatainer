@@ -34,7 +34,7 @@ jobs:
         id: build
         uses: redhat-actions/buildah-build@v2.9
         with:
-          image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          image: ${{ env.IMAGE_NAME }}
           tags: cuda latest ${{ github.sha }}-cuda
           containerfiles: |
             ./Containerfile.cuda
