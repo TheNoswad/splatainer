@@ -117,12 +117,9 @@ RUN apt-get update && apt-get install -y \
     libglew2.2 \
     qtbase5-dev \
     libqt5opengl5 \
-    libcgal14t64 \
-    libceres2 \
-    libopencv-core4.6d \
-    libopencv-imgproc4.6d \
-    libopencv-imgcodecs4.6d \
-    libopencv-features2d4.6d \
+    libcgal-dev \
+    libceres-dev \
+    libopencv-dev \
     libopenimageio2.4 \
     openimageio-tools \
     libx11-6 \
