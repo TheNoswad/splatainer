@@ -1,4 +1,5 @@
-FROM ubuntu:24.04
+# Stage 1: Builder
+FROM ubuntu:24.04 AS builder
 
 # Prevent interactive prompts during build
 ENV DEBIAN_FRONTEND=noninteractive
@@ -11,23 +12,26 @@ RUN apt-get update && apt-get install -y \
     ninja-build \
     git \
     wget \
-    ca-certificates
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set GCC 10 as default
 ENV CC=gcc-10
 ENV CXX=g++-10
 
-# Install CUDA (adjust version as needed)
+# Install CUDA toolkit
 RUN wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
     dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm cuda-keyring_1.1-1_all.deb && \
     apt-get update && \
-    apt-get install -y cuda-toolkit-12-6
+    apt-get install -y cuda-toolkit-12-6 && \
+    rm -rf /var/lib/apt/lists/*
 
 ENV PATH=/usr/local/cuda/bin:$PATH
 ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
 
-# COLMAP dependencies
-RUN apt-get install -y \
+# COLMAP build dependencies
+RUN apt-get update && apt-get install -y \
     libboost-all-dev \
     libeigen3-dev \
     libflann-dev \
@@ -43,17 +47,15 @@ RUN apt-get install -y \
     libceres-dev \
     libopencv-dev \
     libopenimageio-dev \
-    openimageio-tools
-
-# UI dependencies (X11, OpenGL)
-RUN apt-get install -y \
+    openimageio-tools \
     libx11-dev \
     libxrandr-dev \
     libxinerama-dev \
     libxcursor-dev \
     libxi-dev \
     mesa-utils \
-    libgl1-mesa-dri
+    libgl1-mesa-dri \
+    && rm -rf /var/lib/apt/lists/*
 
 # Build COLMAP
 WORKDIR /opt
@@ -62,18 +64,84 @@ RUN git clone https://github.com/colmap/colmap.git && \
     mkdir build && cd build && \
     cmake .. -GNinja \
         -DCMAKE_CUDA_ARCHITECTURES=all \
-        -DCMAKE_BUILD_TYPE=Release && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
     ninja && \
-    ninja install
+    ninja install && \
+    cd /opt && rm -rf colmap
 
+# Build GLOMAP
 RUN git clone https://github.com/colmap/glomap.git && \
     cd glomap && \
     mkdir build && cd build && \
     cmake .. -GNinja \
         -DCMAKE_CUDA_ARCHITECTURES=all \
-        -DCMAKE_BUILD_TYPE=Release && \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local && \
     ninja && \
-    ninja install
+    ninja install && \
+    cd /opt && rm -rf glomap
+
+# Stage 2: Runtime
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install CUDA runtime (not full toolkit)
+RUN apt-get update && \
+    apt-get install -y wget ca-certificates && \
+    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2404/x86_64/cuda-keyring_1.1-1_all.deb && \
+    dpkg -i cuda-keyring_1.1-1_all.deb && \
+    rm cuda-keyring_1.1-1_all.deb && \
+    apt-get update && \
+    apt-get install -y cuda-cudart-12-6 cuda-libraries-12-6 && \
+    rm -rf /var/lib/apt/lists/*
+
+ENV PATH=/usr/local/cuda/bin:$PATH
+ENV LD_LIBRARY_PATH=/usr/local/cuda/lib64:$LD_LIBRARY_PATH
+
+# Install runtime dependencies only
+RUN apt-get update && apt-get install -y \
+    libboost-filesystem1.83.0 \
+    libboost-program-options1.83.0 \
+    libboost-graph1.83.0 \
+    libboost-system1.83.0 \
+    libboost-test1.83.0 \
+    libeigen3-dev \
+    libflann1.9 \
+    libfreeimage3 \
+    libmetis5 \
+    libgoogle-glog0v6 \
+    libgflags2.2 \
+    libsqlite3-0 \
+    libglew2.2 \
+    qtbase5-dev \
+    libqt5opengl5 \
+    libcgal14t64 \
+    libceres2 \
+    libopencv-core4.6d \
+    libopencv-imgproc4.6d \
+    libopencv-imgcodecs4.6d \
+    libopencv-features2d4.6d \
+    libopenimageio2.4 \
+    openimageio-tools \
+    libx11-6 \
+    libxrandr2 \
+    libxinerama1 \
+    libxcursor1 \
+    libxi6 \
+    mesa-utils \
+    libgl1-mesa-dri \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy built binaries and libraries from builder
+COPY --from=builder /usr/local/bin/* /usr/local/bin/
+COPY --from=builder /usr/local/lib/* /usr/local/lib/
+COPY --from=builder /usr/local/include/colmap /usr/local/include/colmap
+COPY --from=builder /usr/local/share/colmap /usr/local/share/colmap
+
+# Update library cache
+RUN ldconfig
 
 # For UI support, you'll need to mount X11 socket at runtime
 # docker run --gpus all -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ...
