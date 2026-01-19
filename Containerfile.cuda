@@ -129,6 +129,7 @@ RUN apt-get update && apt-get install -y \
     libxi6 \
     mesa-utils \
     libgl1-mesa-dri \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy built binaries and libraries from builder
@@ -143,5 +144,10 @@ RUN ldconfig
 # For UI support, you'll need to mount X11 socket at runtime
 # docker run --gpus all -e DISPLAY=$DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix ...
 
+# Copy pipeline script
+COPY pipeline.sh /pipeline.sh
+RUN chmod +x /pipeline.sh
+
 WORKDIR /workspace
-CMD ["/bin/bash"]
+ENTRYPOINT ["/pipeline.sh"]
+CMD ["full-pipeline"]  # Auto-runs full pipeline by default
